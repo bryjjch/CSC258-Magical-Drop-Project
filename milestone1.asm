@@ -2,7 +2,7 @@
 # Magical Drop - Milestone 1: draw the static scene.
 #
 # Student 1: Hakan Gokdogan, 1013986359
-# Student 2: Name, Student Number
+# Student 2: Bryan Chen, 1009307554
 #
 ######################## Bitmap Display Configuration ########################
 # - Unit width in pixels:       8
