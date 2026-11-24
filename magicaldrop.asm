@@ -176,7 +176,7 @@ grid_done:
 draw_player:
     lw $t0, player_col
     addi $a0, $t0, 2    # x = column + 2
-    li $a1, 15          # y = bottom grid row
+    li $a1, 17          # y = row just below the bottom wall
     lw $a2, PLAYER_COLOUR # load the colour for the player
     j draw_unit         # draw_unit returns straight to our caller
 
