@@ -7,6 +7,10 @@
 # We assert that the code submitted here is entirely our own 
 # creation, and will indicate otherwise when it is not.
 #
+# Decisions:
+# - 10 key strokes trigger a new row
+# - Sleep each frame 16 ms (gives us about 60 fps).
+# - A keystroke that results in bumping against the wall does not count towards the counter
 ######################## Bitmap Display Configuration ########################
 # - Unit width in pixels:       8
 # - Unit height in pixels:      8
@@ -30,15 +34,24 @@ COLOURS:        .word 0xff0000, 0x00ff00, 0x0000ff, 0xffff00  # red, green, blue
 WALL_COLOUR:    .word 0x808080      # grey
 PLAYER_COLOUR:  .word 0xffffff      # white
 
+##############################################################################
+# Mutable Data
+##############################################################################
+
 # 14 rows * 7 columns * 4 bytes = 392 bytes for the playing field
 grid:           .space 392
 
 # The character starts in the middle column
 player_col:     .word 3
 
-##############################################################################
-# Mutable Data
-##############################################################################
+# The colour of the bubbles the character is holding (0 = none)
+held_colour:    .word 0
+
+# How many bubbles are currently held
+held_count:     .word 0
+
+# The keystrokes since the last new row
+key_count:      .word 0
 
 ##############################################################################
 # Code
@@ -49,14 +62,9 @@ player_col:     .word 3
     # Run the game.
 
 main:
-    jal fill_grid       # put random bubbles in the top rows
-    jal draw_walls
-    jal draw_grid
-    jal draw_player
-
-    li $v0, 10          # exit
-    syscall
-
+    jal fill_grid
+    j game_loop
+    
 ##############################################################################
 # draw_unit: colour one unit on the display.
 #   $a0 = x, $a1 = y, $a2 = colour
@@ -167,11 +175,11 @@ grid_done:
     lw $s0, 4($sp)
     lw $s1, 8($sp)
     lw $s2, 12($sp)
-    addi $sp, $sp, 16 # move stack pointer back to before
+    addi $sp, $sp, 16   # move stack pointer back to before
     jr $ra              # jump back to main
 
 ##############################################################################
-# draw_player: draw the character in the bottom grid row.
+# draw_player: draw the character under the grid.
 ##############################################################################
 draw_player:
     lw $t0, player_col
@@ -181,13 +189,293 @@ draw_player:
     j draw_unit         # draw_unit returns straight to our caller
 
 
+##############################################################################
+# clear_player_area: paint all the units outside the grid black.
+##############################################################################
+clear_player_area:
+    addi $sp, $sp, -12  # make room in stack for 3 words
+    sw $ra, 0($sp)      # store $ra in the first position in the stack
+    sw $s0, 4($sp)      # store $s0 in the stack
+    sw $s1, 8($sp)      # store $s1 in the stack
+
+    li $s1, 17          # y = 17
+clear_row:
+    li $s0, 2           # x = 2
+
+clear_col:
+    move $a0, $s0       # moving x into $a0
+    move $a1, $s1       # moving y into $a1
+    li $a2, 0           # move the colour 0 (which is just black) into $a2
+    jal draw_unit       # draw the unit (black)
+    addi $s0, $s0, 1         # increment x by 1
+    ble $s0, 8, clear_col # jump to clear_col if x <= 8
+
+    addi $s1, $s1, 1    # increment y by 1
+    ble $s1, 31, clear_row # jump to clear_row if y <= 31
+
+clear_done:
+    # restore previous saved values
+    lw $ra, 0($sp)
+    lw $s0, 4($sp)
+    lw $s1, 8($sp)
+    # restore the stack pointer to before
+    addi $sp, $sp, 12
+
+    jr $ra # jump back to caller
+
+##############################################################################
+# draw_held: draw the held units
+##############################################################################
+draw_held:    
+    addi $sp, $sp, -12  # make room in stack for 3 words
+    sw $ra, 0($sp)      # store $ra in the first position in the stack
+    sw $s0, 4($sp)      # store $s0 (current y) in the stack
+    sw $s1, 8($sp)      # store $s1 (ending y) in the stack
+
+    li $s0, 18          # set $s0 (y) to 18
+    lw $t0, held_count  # load the count of held balls into $t0
+    addi $s1, $t0, 18    # load $t0 (the held balls) + 18 into $s1
+    ble $s1, 32, held_loop # if $s1 (the ending y) is less than 32, go to the loop
+    li $s1, 32          # load 32 into the y
+
+held_loop:
+    beq $s0, $s1, held_done # if the current y equals to balls + 18, we're done
+    lw $t1, player_col
+    addi $a0, $t1, 2    # Add 2 to the current position of the player
+    move $a1, $s0       # Move $s0 (y) into $a1
+    lw $a2, held_colour # load the colour of the held balls into $a2
+    jal draw_unit       # draw the held bubble
+    addi $s0, $s0, 1    # increment y by 1
+    j held_loop         # loop back up
+
+held_done:
+    # restore previous saved values
+    lw $ra, 0($sp)
+    lw $s0, 4($sp)
+    lw $s1, 8($sp)
+    # restore the stack pointer to before
+    addi $sp, $sp, 12
+
+    jr $ra # jump back to caller
+
+##############################################################################
+# handle_input: handle keyboard inputs
+##############################################################################
+handle_input:
+    addi $sp, $sp, -4   # make room in the stack for $ra
+    sw $ra, 0($sp)      # store $ra in the stack
+
+    lw $t0, ADDR_KBRD   # load the base address of the keyboard into $t0
+    lw $t1, 0($t0)      # load the word at offset 0 of $t0 into $t1
+    bne $t1, 1, input_done # if the word isn't 1, that means no key was pressed, 
+                        # so we don't need to do anything
+    lw $t2, 4($t0)      # load the word at offset 4 of $t0 into $t2 (the key's
+                        # ASCII code)
+    beq $t2, 0x61, key_a  # if the key is a, then go to key_a
+    beq $t2, 0x64, key_d  # if the key is d, then go to key_d
+    beq $t2, 0x73, key_s  # if the key is s, then go to key_s
+    beq $t2, 0x71, key_q  # if the key is q, then go to key_q
+    j input_done
+
+key_a:
+    lw $t3, player_col    # load the current player column into $t3
+    blez $t3, input_done  # if we're already at the very left, just skip to input_done
+    addi $t3, $t3, -1     # decrement $t3 (current player column) by 1
+    sw $t3, player_col    # save the updated column back into player_col
+    j count_key
+
+key_d:
+    lw $t3, player_col    # load the current player column into $t3
+    bge $t3, 6, input_done  # if we're already at the very right, just skip to input_done
+    addi $t3, $t3, 1      # increment $t3 (current player column) by 1
+    sw $t3, player_col    # save the updated column back into player_col
+    j count_key
+
+key_s:
+    jal grab              # go to grab
+    j count_key
+
+key_q:
+    li $v0, 10            # load 10 into $v0
+    syscall               # quit (since q)
+    j count_key
+
+count_key:
+    lw $t0, key_count     # load the key_count into $t0
+    addi $t0, $t0, 1      # increment $t0 by 1
+    sw $t0, key_count     # store $t0 in key_count
+    blt $t0, 10, input_done # if we're less than 10 keystrokes, we're done
+    sw $zero, key_count   # reset counter to 0, since we're at 10 key strokes
+    jal push_row
+    jal check_game_over   # check if the game is over
+    bne $v0, $zero, game_over # if $v0 is 0, then game over
+    
+input_done:
+    # restore previous saved values
+    lw $ra, 0($sp) 
+    addi $sp, $sp, 4      # restore stack pointer to before
+    jr $ra                # jump back to 
+
+##############################################################################
+# grab: grabbing a bubble
+##############################################################################
+grab:
+    lw $t0, player_col  # load player column into $t0
+    sll $t0, $t0, 2     # multiply the column by 4 (the byte offset)
+    la $t1, grid        # load grid into $t1
+    add $t1, $t1, $t0   # add $t0 and $t1 (start of the grid + the player's column)
+    addi $t1, $t1, 364  # add 364 to $t1 (which is now row 13 of the character's column)
+    li $t2, 13          # set $t2 to 13 (the row)
+
+grab_find:
+    bltz $t2, grab_done # if the row is 0, then we're done
+    lw $t3, 0($t1)      # load the word at offset 0 of $t1 into $t3
+    bne $t3, $zero, grab_check # if $t3 isn't 0, then we found a bubble, so we check
+    addi $t1, $t1, -28       # decrement $t1 by 28 (move up a row)
+    addi $t2, $t2, -1        # decrement $t2 by 1 (move up a row)
+    j grab_find         # loop back
+
+grab_check:
+    lw $t4, held_count  # load held_count into $t4
+    beq $t4, $zero, grab_take # if we're not holding anything, then it doesn't matter
+                        # what colour it is, so just take
+    lw $t5, held_colour # load the held_colour into $t5
+    bne $t3, $t5, grab_done # if we're holding a different colour, then we're done (don't grab)
+
+grab_take:
+    sw $t3, held_colour   # set the held COLOURS
+
+grab_loop:
+    bltz $t2, grab_save   # stop if we've gone past the top row
+    lw $t6, 0($t1)        # load the word at $t1 into $t6 
+    bne $t6, $t3, grab_save # if the colour changes, then stop
+    sw $zero, 0($t1)      # remove the bubble from the grid
+    addi $t4, $t4, 1           # increment $t4 (the held count) by 1
+    addi $t1, $t1, -28         # decrement $t1 (the grid position) by 28 to move up a row
+    addi $t2, $t2, -1          # decrement $t2 by 1
+    j grab_loop           # loop back
+
+grab_save:
+    sw $t4, held_count    # load $t4 into held_count
+
+grab_done:
+    jr $ra                # jump back to caller
+
+
+##############################################################################
+# fill_row: given a row number in $a0, fill the row's 7 cells with random COLOURS
+##############################################################################
+fill_row:
+    li $t1, 28          # store 28 in $t1
+    mul $t0, $a0, $t1   # the row * 28 (which is the byte offset of the row)
+    la $t2, grid        # load grid into $t2
+    add $t0, $t0, $t2   # add $t2 to $t0 (which is now column 0 of the row)
+    li $t1, 0           # now set $t0 to 0 (the cell counter)
+
+fill_row_loop:
+    beq $t1, 7, fill_row_done # if $t1 is 7, that means we're done filling the row
+    # grab a random colour like before
+    li $v0, 42          # selects MARS syscall for random int
+    li $a0, 0           # ID of random number generator
+    li $a1, 4           # the upper bound
+    syscall
+    sll $a0, $a0, 2     # index * 4 = byte offset
+    la $t2, COLOURS     # load address of COLOURS into $t2
+    add $t2, $t2, $a0   # $t2 points at random colour
+    lw $t3, 0($t2)      # $t3 = COLOURS[index]
+    sw $t3, 0($t0)      # store colour in grid cell
+    addi $t0, $t0, 4    # move to next cell
+    addi $t1, $t1, 1    # increment cell counter by 1
+    j fill_row_loop     # loop back
+
+fill_row_done:
+    jr $ra
+
+##############################################################################
+# push_row: move every row down one, then fill row 0 with new bubbles
+##############################################################################
+push_row:
+    addi $sp, $sp, -4    # make room in stack
+    sw $ra, 0($sp)      # store $ra in stack
+    la $t2, grid        # store the grid in $t2
+    addi $t0, $t2, 388 # store the very last word of grid in $t0
+    addi $t3, $t2, 28  # store the first word of row 1 of grid in $t3
+
+shift_loop:
+    blt $t0, $t3, shift_done # if we get to row 1, every row has been copied
+    lw $t1, -28($t0)    # store the word 28 bytes before $t0 (a row up)
+    sw $t1, 0($t0)      # store $t1 into the word at $t0
+    addi $t0, $t0, -4   # decrement $t0 by 4 (go to the previous word)
+    j shift_loop        # loop back
+
+shift_done:
+    li $a0, 0           # set $a0 to 0
+    jal fill_row        # fill the top row again
+
+    # restore previous stored values
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4        # move stack pointer back to before
+    jr $ra
+
+##############################################################################
+# check_game_over: if any cells of grid row 13 non
+##############################################################################
+check_game_over:
+    la $t0, grid
+    addi $t0, $t0, 364  # add 364 to $t0
+    li $t1, 0           # set the cell counter to 0
+
+game_over_loop:
+    beq $t1, 7, game_over_safe # if all 7 cells empty, not game over
+    lw $t2, 0($t0)      # load the word at $t0 into $t2
+    bne $t2, $zero, game_over_over # if a bubble has reached here, then game over
+    addi $t0, $t0, 4    # move to the next cell
+    addi $t1, $t1, 1    # increment counter by 1
+    j game_over_loop    # loop back
+
+game_over_over:
+    li $v0, 1           # set $v0 to 1
+    jr $ra
+
+game_over_safe:
+    li $v0, 0           # set $v0 to 0
+    jr $ra
+##############################################################################
+# draw_scene: draw the scene for every frame
+##############################################################################
+draw_scene:
+    # save $ra
+    addi $sp, $sp, -4   # make room in stack
+    sw $ra, 0($sp)      # store $ra in stack
+    
+    jal draw_walls
+    jal draw_grid
+    jal clear_player_area   
+    jal draw_player
+    jal draw_held
+
+    # restore saved values
+    lw $ra, 0($sp)
+    addi $sp, $sp, 4    # move stack pointer back to before
+    
+    jr $ra
+
+game_over:
+    jal draw_scene
+    li $v0, 10          # set $v0 to 10
+    syscall             # terminate
+
 game_loop:
     # 1a. Check if key has been pressed
+    jal handle_input
     # 1b. Check which key has been pressed
     # 2a. Check for collisions
 	# 2b. Update locations (capsules)
 	# 3. Draw the screen
+    jal draw_scene
 	# 4. Sleep
-
+    li $v0, 32          # place 32 in $v0
+    li $a0, 16          # place 16 in $a0
+    syscall             # sleep for 16 ms
     # 5. Go back to Step 1
     j game_loop
