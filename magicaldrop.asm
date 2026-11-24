@@ -275,8 +275,19 @@ handle_input:
     beq $t2, 0x64, key_d  # if the key is d, then go to key_d
     beq $t2, 0x73, key_s  # if the key is s, then go to key_s
     beq $t2, 0x71, key_q  # if the key is q, then go to key_q
+    beq $t2, 0x77, key_w  # if the key is w, then go to key_w
     j input_done
 
+key_w:
+    jal throw             # go to throw
+    bltz $v0, input_done  # if nothing was thrown, then we're done
+    move $a1, $v0         # set $a1 to $v0
+    lw $a0, player_col    # set $a0 to player_col
+    jal check_match       # go to check_match
+    jal check_game_over   # go to check_game_over
+    bne $v0, $zero, game_over # if game over then go to game over
+    j count_key           # go to count_key
+    
 key_a:
     lw $t3, player_col    # load the current player column into $t3
     blez $t3, input_done  # if we're already at the very left, just skip to input_done
@@ -309,7 +320,7 @@ count_key:
     jal push_row
     jal check_game_over   # check if the game is over
     bne $v0, $zero, game_over # if $v0 is 0, then game over
-    
+
 input_done:
     # restore previous saved values
     lw $ra, 0($sp) 
@@ -440,6 +451,104 @@ game_over_over:
 game_over_safe:
     li $v0, 0           # set $v0 to 0
     jr $ra
+
+##############################################################################
+# throw: throw the bubble
+##############################################################################
+throw:
+    lw $t0, held_count  # store held_count in $t0
+    beq $t0, $zero, throw_none # if we're not holding anything, leave
+    
+    lw $t3, player_col  # load player column into $t3
+    sll $t3, $t3, 2     # multiply the column by 4 (the byte offset)
+    la $t1, grid        # load grid into $t1
+    add $t1, $t1, $t3   # add $t3 and $t1 (start of the grid + the player's column)
+    addi $t1, $t1, 364  # add 364 to $t1 (which is now row 13 of the character's column)
+    li $t2, 13          # set $t2 to 13 (the row)
+
+bubble_search_loop:
+    bltz $t2, bubble_place      # if $t2 is below 0, then stop (off the top)
+    lw $t3, 0($t1)      # store the word at $t1 in $t3
+    bne $t3, $zero, bubble_place # if $t3 is not 0, then place below here (found bubble)
+    addi $t1, $t1, -28  # decrement $t1 by 28
+    addi $t2, $t2, -1   # decrement $t2 by 1 (row number)
+    j bubble_search_loop             # loop back
+
+bubble_place:
+    addi $t5, $t2, 1    # increment $t2 by 1 and store in $t5 (the landing row)
+    add $t6, $t5, $t0   # add $t0 and $t5 and place in $t6 (add on the column)
+    bgt $t6, 14, throw_none # if $t6 is greater than 14 (out of the grid), throw none
+    addi $t1, $t1, 28   # increment $t1 by 28 
+
+    lw $t4, held_colour # place the held_colour in $t4
+    
+bubble_place_loop:
+    beq $t0, $zero, throw_done # if $t0 is 0 (the bubbles held is 0) then we're done
+    sw $t4, 0($t1)      # store $t4 in the first word of $t1
+    addi $t1, $t1, 28   # increment $t1 by 28
+    addi $t0, $t0, -1   # decrement $t0 by 1
+    j bubble_place_loop
+
+throw_done:
+    addi $v0, $t6, -1   # set $v0 to $t6 - 1 (the bottom row)
+    sw $zero, held_count # set the held_count to 0
+    sw $zero, held_colour #set the held_colour to 0
+    jr $ra              # return to caller
+
+throw_none:
+    li $v0, -1          # set $v0 to -1
+    jr $ra
+    
+##############################################################################
+# check_match: check if the bubbles match (where $a0 is the column and $a1 is
+# the bottom row)
+##############################################################################    
+check_match:
+    li $t6, 28          # load 28 into $t6
+    mul $t0, $a1, $t6   # the row * 28 (which is the byte offset of the row)
+    sll $t7, $a0, 2     # multiply $a0 (the column) by 4
+    add $t0, $t0, $t7   # add $t7 to $t0 (row offset + column offset)
+    la $t7, grid        # load the grid into $t7
+    add $t0, $t0, $t7   # add $t7 and $t0 and store in $t0
+
+    lw $t1, 0($t0)      # load the word at $t0 (the bottom bubble) into $t1 
+
+    move $t2, $t0       # store $t0 in $t2 (the address)
+    move $t3, $a1       # store $a1 in $t3 (row number)
+    li $t4, 0           # store 0 in $t4 (the count)
+    
+match_count:
+    bltz $t3, match_count_done # if $t3 (row number) less than 0, then we're done
+    lw $t5, 0($t2)      # load word at $t2 into $t5
+    bne $t5, $t1, match_count_done # if $t5 and $t1 aren't equal, then done (different colour)
+    addi $t4, $t4, 1    # increment $t4 (the count) by 1
+    addi $t2, $t2, -28  # decrement $t2 by 28 (move up a row)
+    addi $t3, $t3, -1   # decrement $t3 by 1 (move up a row)
+    j match_count       # loop back
+
+match_count_done:
+    blt $t4, 3, no_match # if $t4 less than 3 (matches less than 3), then no match
+
+    move $t2, $t0       # move $t0 into $t2 (put pointer back to bottom)
+    move $t3, $t4       # move $t4 into $t3 (how many cells to erase)
+
+match_delete:
+    beq $t3, $zero, match_delete_done # if $t3 is 0 (no more cells to erase), then we're done
+    sw $zero, 0($t2)    # store 0 in $t2 (write 0 in the cell)
+    addi $t2, $t2, -28  # decrement $t2 by 28 (move up a row)
+    addi $t3, $t3, -1   # decrement $t3 by 1 (1 less cell to erase)
+    j match_delete      # loop back
+
+match_delete_done:
+    move $v0, $t4       # store $t4 in $v0 (how many bubbles were cleared)
+    jr $ra
+
+no_match:
+    li $v0, 0           # store 0 in $v0 (no bubbles were cleared)
+    jr $ra
+    
+    
+    
 ##############################################################################
 # draw_scene: draw the scene for every frame
 ##############################################################################
