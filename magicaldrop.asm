@@ -34,6 +34,38 @@ COLOURS:        .word 0xff0000, 0x00ff00, 0x0000ff, 0xffff00  # red, green, blue
 WALL_COLOUR:    .word 0x808080      # grey
 PLAYER_COLOUR:  .word 0xffffff      # white
 
+# Background music settings
+MUSIC_INSTRUMENT: .word 80
+MUSIC_VOLUME:     .word 50
+
+MELODY:
+    .word 0,3250, 66,250, 69,250, 66,250    # bar 1
+    .word 64,250, 66,1000, 66,250, 69,250, 66,250, 64,1250, 66,250, 69,250, 66,250    # bar 2
+    .word 64,250, 66,1000, 69,250, 69,250, 66,250, 64,250, 62,1000, 69,250, 69,250, 66,250    # bar 3
+    .word 64,250, 62,1000, 69,250, 69,250, 66,250, 64,1250, 62,250, 62,250, 64,250    # bar 4
+    .word 64,250, 66,250, 64,250, 66,250, 64,250, 66,250, 64,250, 66,250, 64,1250, 69,250, 69,250, 66,250    # bar 5
+    .word 64,250, 66,1250, 69,250, 66,250, 64,250, 62,1250, 69,500    # bar 6
+    .word 64,250, 66,1000, 62,250, 62,250, 62,250, 64,250, 62,1000, 62,250, 62,250, 64,250    # bar 7
+    .word 67,250, 66,500, 62,250, 62,250, 62,250, 62,250, 64,250, 62,1250, 62,250, 62,250, 64,250    # bar 8
+    .word 64,500, 64,250, 64,250, 64,250, 64,250, 64,250, 66,500, 64,500, 64,250, 64,250, 66,250, 64,500    # bar 9
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1000, 66,500    # bar 10 
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 71,1000, 66,500    # bar 11
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1500    # bar 12
+    .word 66,250, 64,250, 66,500, 66,250, 64,250, 66,250, 64,250, 66,250, 64,500, 64,250, 62,1000    # bar 13
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1000, 66,500    # bar 10
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 71,1000, 66,500    # bar 11
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1500    # bar 12
+    .word 66,250, 64,250, 66,500, 66,250, 64,250, 66,250, 64,250, 66,250, 64,500, 64,250, 62,250, 66,500, 64,250    # bar 14
+    .word 66,500, 64,250, 62,250, 0,500, 62,250, 64,250, 66,500, 66,500, 0,500, 62,250, 64,250    # bar 15
+    .word 66,250, 66,250, 64,250, 62,250, 66,250, 66,250, 64,250, 62,250, 64,500, 64,250, 62,1000, 62,250    # bar 16
+    .word 62,250, 64,250, 66,750, 62,500, 57,750, 55,250, 54,500, 62,250, 62,250, 64,250    # bar 17
+    .word 66,500, 64,250, 66,500, 66,250, 66,500, 66,250, 64,250, 64,250, 62,250, 64,250, 62,250, 62,250, 64,250    # bar 18
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1000, 66,500    # bar 10
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 71,1000, 66,500    # bar 11
+    .word 66,500, 64,500, 66,500, 64,250, 66,500, 64,250, 69,1500    # bar 12
+    .word 66,250, 64,250, 66,500, 66,250, 64,250, 66,250, 64,250, 66,250, 64,500, 64,250, 62,1000    # bar 13
+    .word -1, 0    # end of song: loop back to the start
+
 ##############################################################################
 # Mutable Data
 ##############################################################################
@@ -53,6 +85,12 @@ held_count:     .word 0
 # The keystrokes since the last new row
 key_count:      .word 0
 
+# The current music state (offset of the next note)
+music_offset:   .word 0
+
+# The time when the next note is due
+next_note_time: .word 0
+
 ##############################################################################
 # Code
 ##############################################################################
@@ -63,6 +101,9 @@ key_count:      .word 0
 
 main:
     jal fill_grid
+    li $v0, 30          # store 30 for syscall
+    syscall             # get system time (syscall 30)
+    sw $a0, next_note_time # store the next_note_time in $a0 (first note is right now)
     j game_loop
     
 ##############################################################################
@@ -548,7 +589,41 @@ no_match:
     jr $ra
     
     
-    
+##############################################################################
+# play_music: if the next note is due, start it and schedule
+# the one after it.
+##############################################################################
+play_music:
+    li $v0, 30          # store 30 for neext syscall
+    syscall             # syscall 30: get the time
+    lw $t0, next_note_time # # store next_note_time in $t0
+    subu $t1, $a0, $t0  # $t1 = now - due
+    bltz $t1, music_done # negative means that it's not time yet
+    la $t2, MELODY      # $t2 = start of the melody
+    lw $t3, music_offset # $t3 = byte offset of the next note
+    add $t2, $t2, $t3   # $t2 = address of the next note
+    lw $t4, 0($t2)      # $t4 = the pitch
+    bgez $t4, music_play # anything except -1 is a note or a rest
+    la $t2, MELODY      # we reached the end marker, so go back to the first note
+    li $t3, 0
+    lw $t4, 0 ($t2)
+
+music_play:
+    lw $t5, 4($t2)      # $t5 = duration in milliseconds
+    addu $t0, $t0, $t5  # next note is due "duration" milliseconds after this one was due
+    sw $t0, next_note_time
+    addi $t3, $t3, 8    # move to the next (pitch, duration) pair
+    sw $t3, music_offset
+    beq $t4, $zero, music_done # pitch 0 is a rest: wait without playing
+    move $a0, $t4       # $a0 = pitch
+    move $a1, $t5       # $a1 = duration
+    lw $a2, MUSIC_INSTRUMENT
+    lw $a3, MUSIC_VOLUME
+    li $v0, 31          # syscall 31: MIDI out, returns
+    syscall
+
+music_done:
+    jr $ra
 ##############################################################################
 # draw_scene: draw the scene for every frame
 ##############################################################################
@@ -575,6 +650,8 @@ game_over:
     syscall             # terminate
 
 game_loop:
+    # 0. start the next note if it's due
+    jal play_music
     # 1a. Check if key has been pressed
     jal handle_input
     # 1b. Check which key has been pressed

@@ -1,0 +1,201 @@
+\documentclass{article}
+
+%% Page Margins %%
+\usepackage{geometry}
+\geometry{
+    top = 0.75in,
+    bottom = 0.75in,
+    right = 0.75in,
+    left = 0.75in,
+}
+
+\usepackage{amsmath}
+\usepackage{graphicx}
+\usepackage{parskip}
+\usepackage{float}
+
+\title{Assembly Project: Magical Drop}
+
+% TODO: Enter your name
+\author{Bryan Chen and Hakan Gokdogan}
+
+\begin{document}
+\maketitle
+
+\section{Instruction and Summary}
+
+\begin{enumerate}
+
+    \item Which milestones were implemented? 
+
+    We implemented milestones 1, 2, and 3.
+
+    \item How to view the game:
+    
+    \begin{enumerate}
+
+    \item Unit width/height: 8 pixels $\times$ 8 pixels
+    \item Display width/height: 256 pixels $\times$ 256 pixels
+    \item Resulting grid of units: 32 $\times$ 32 units
+    \item Base address: 0x10008000 (\$gp)
+    \item Bytes per display row: 32 units $\times$ 4 bytes = 128
+    \item Unit address formula: 0x10008000 + 128 $\times$ $y$ + 4 $\times$ $x$
+
+    \end{enumerate}
+
+\begin{figure}[ht!]
+    \centering \includegraphics[width=0.5\textwidth]{m1_scene.png}
+    \caption{Milestone 1 Scene}
+    \label{Instructions}
+\end{figure}
+
+\item Game Summary:
+
+\begin{itemize}
+\item 10 keystrokes trigger a new row
+\item 16 ms sleep (to get about 60 FPS)
+\item A move into the wall doesn’t count toward the keystroke counter
+\item A failed throw also doesn’t count for a keystroke
+\item A failed grab counts for a keystroke
+\item Bubbles hitting row 13 means game-over, termination
+\item Q quits at any time, then the program exits
+\item The board starts with 5 filled rows
+\end{itemize}
+
+    
+\end{enumerate}
+
+\section{Attribution Table}
+
+\begin{center}
+\begin{tabular}{|| c | c ||}
+\hline
+ Bryan Jianjun Chen, 1009307554 & Hakan Gokdogan, 1013986359 \\ 
+ \hline
+ Movement & Scene setup \\
+ \hline
+ Grabbing & Character setup \\
+ \hline
+ Throwing & Drawing \\ 
+ \hline
+\end{tabular}
+\end{center}
+
+\section{Functions}
+\begin{itemize}
+\item Draw\_unit: writes a unit to the bitmap
+\item Fill\_grid: fills first 35 grid cells with random colours
+\item Fill\_row: fills one row’s 7 cells with random colours
+\item Draw\_walls: grey border around grid
+\item Draw\_grid: draws all 98 cells
+\item Clear\_player\_area: blacks out $x = 2\ldots8$, $y = 17\ldots31$
+\item Draw\_player: white unit under the player’s column
+\item draw held: draws heldcount units of held\_colour under the player
+\item Draw\_scene: calls all draw functions in order
+\item Handle\_input: reads the keyboard, handles a/d/s/w/q, counts keystrokes
+\item Grab: picks up the bottom bubble in the column plus same-coloured bubbles above it
+\item Throw: places held bubbles under the column’s lowest bubble
+\item Check\_match: check for 3 matching in vertical and delete
+\item Push\_row: shifts every row down one, and refills row 0
+\item Check\_game\_over: checks if any cell in row 13 is non-empty
+\end{itemize}
+
+\section{Milestones}
+
+\subsection{Milestone 1}
+\begin{itemize}
+\item 7$\times$14 grid: draw\_walls + draw\_grid
+\item Random rows: fill\_grid
+\item Player at bottom: draw\_player at $y = 17$ (below the wall)
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{m1_memory.png}
+    \caption{Milestone 1 memory}
+    \label{fig:m1-memory}
+\end{figure}
+
+\subsection{Milestone 2}
+\begin{itemize}
+\item A/D movement: key\_a/key\_d to update player\_col
+\item Grab: grab
+\item Row advancement every 10 keystrokes: count\_key $\rightarrow$ push\_row
+\item Repaint about 60x/s: draw\_scene every loop + 16ms of sleep
+\item Quit: key\_s
+\item Game over when bubbles reach the bottom row: check\_game\_over
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{m2_scene.png}
+    \caption{Milestone 2 scene}
+    \label{fig:m2-scene}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{m2_memory.png}
+    \caption{Milestone 2 memory}
+    \label{fig:m2-memory}
+\end{figure}
+
+\subsection{Milestone 3}
+\begin{itemize}
+\item Position limits: blez for key\_a and bge 6 for key\_d
+\item Throw: throw
+\item Vertical 3 match and delete: check\_match
+\end{itemize}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=0.5\textwidth]{m3_scene.png}
+    \caption{Milestone 3 scene}
+    \label{fig:m3-scene}
+\end{figure}
+
+\begin{figure}[H]
+    \centering
+    \includegraphics[width=\textwidth]{m3_memory.png}
+    \caption{Milestone 3 memory}
+    \label{fig:m3-memory}
+\end{figure}
+
+\section{Notable Functions}
+
+\subsection{Grab}
+\begin{itemize}
+\item Start at row 13 of the player’s column, then go upward row by row for the first non-empty cell
+\item If we’re holding a different colour, then do nothing
+\item Otherwise, keep moving upward while the colour matches
+\end{itemize}
+
+\subsection{Throw}
+\begin{itemize}
+\item Similar to grab: an upward scan to find the lowest bubble
+\begin{itemize}
+    \item The landing row is the row of the lowest bubble + 1
+\end{itemize}
+\item However if landing\_row + held\_count is greater than 14 then the throw is rejected since it won’t fit
+\item Then write held\_count cells downward from the landing row and clear the held\_count and held\_colour
+\item Return the bottom row of the stack for match
+\end{itemize}
+
+\subsection{Match}
+\begin{itemize}
+\item From the bottom of the thrown stack, count the same\_coloured cells going up
+\item If the count is greater than or equal to 3, then we zero the cells and return the count
+\end{itemize}
+
+\subsection{Row push}
+\begin{itemize}
+\item Copy every word from 28 bytes above it
+\end{itemize}
+
+\subsection{Game over}
+\begin{itemize}
+\item After a row push or throw, check all 7 cells of row 13 (non-zero means that it’s game over)
+\end{itemize}
+
+
+\end{document}
