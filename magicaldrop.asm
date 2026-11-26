@@ -35,7 +35,7 @@ WALL_COLOUR:    .word 0x808080      # grey
 PLAYER_COLOUR:  .word 0xffffff      # white
 
 # Background music settings
-MUSIC_INSTRUMENT: .word 80
+MUSIC_INSTRUMENT: .word 0
 MUSIC_VOLUME:     .word 50
 
 MELODY:
